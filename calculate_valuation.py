@@ -11,7 +11,7 @@ class DCFValuationCalculator:
     def __init__(self, root):
         self.root = root
         self.root.title("DCF Valuation Calculator")
-        self.root.geometry("1200x800")
+        self.root.geometry("1200x900")
         self.root.minsize(1200, 800)
         
         self.df = None
@@ -157,7 +157,7 @@ class DCFValuationCalculator:
         ttk.Label(dcf_frame, text="Shares Outstanding (millions):").grid(row=3, column=0, sticky="w", padx=5, pady=5)
         self.shares_outstanding = ttk.Entry(dcf_frame)
         self.shares_outstanding.grid(row=3, column=1, padx=5, pady=5)
-        self.shares_outstanding.insert(0, "100.0")
+        # Leave shares outstanding blank instead of setting a default value
         self.auto_calc_labels["shares_outstanding"] = ttk.Label(dcf_frame, text="", foreground="green")
         self.auto_calc_labels["shares_outstanding"].grid(row=3, column=2, sticky="w", padx=5, pady=5)
         
@@ -667,54 +667,147 @@ class DCFValuationCalculator:
                                 text=f"(Avg: {avg_growth:.2f}%, {growth_text})"
                             )
                 
-                # Operating Margin
-                if 'Operating Income' in self.df.index and 'Revenue' in self.df.index and len(selected_cols) >= 4:
-                    # Calculate average operating margin
+                # Operating Margin - Use all selected columns, not just the last 4
+                if 'Operating Income' in self.df.index and 'Revenue' in self.df.index and len(selected_cols) >= 1:
+                    # Calculate average operating margin across all selected quarters
                     margins = []
-                    for col in selected_cols[-4:]:  # Last 4 quarters from selection
+                    for col in selected_cols:  # Use all selected columns
                         try:
                             op_income = self.df.loc['Operating Income', col]
                             revenue = self.df.loc['Revenue', col]
                             if pd.notna(op_income) and pd.notna(revenue) and revenue > 0:
                                 margin = (op_income / revenue) * 100
                                 margins.append(margin)
-                        except:
+                        except Exception as e:
+                            print(f"Error calculating margin for {col}: {str(e)}")
                             continue
                     
                     if margins:
                         avg_margin = sum(margins) / len(margins)
                         self.operating_margin.delete(0, tk.END)
                         self.operating_margin.insert(0, f"{avg_margin:.2f}")
-                        self.auto_calc_labels["operating_margin"].config(text=f"(Avg from {quarters_used})")
+                        self.auto_calc_labels["operating_margin"].config(
+                            text=f"(Avg from {len(margins)} quarters in range {quarters_used})"
+                        )
                 
-                # Tax Rate
-                if 'Income Taxes' in self.df.index and 'Pretax Income' in self.df.index and len(selected_cols) >= 4:
-                    # Calculate average tax rate
+                # Tax Rate - Use all selected columns, not just the last 4
+                if 'Income Taxes' in self.df.index and 'Pretax Income' in self.df.index and len(selected_cols) >= 1:
+                    # Calculate average tax rate across all selected quarters
                     rates = []
-                    for col in selected_cols[-4:]:  # Last 4 quarters from selection
+                    for col in selected_cols:  # Use all selected columns
                         try:
                             tax = self.df.loc['Income Taxes', col]
                             pretax = self.df.loc['Pretax Income', col]
                             if pd.notna(tax) and pd.notna(pretax) and pretax > 0:
                                 rate = (tax / pretax) * 100
                                 rates.append(rate)
-                        except:
+                        except Exception as e:
+                            print(f"Error calculating tax rate for {col}: {str(e)}")
                             continue
                     
                     if rates:
                         avg_tax_rate = sum(rates) / len(rates)
                         self.tax_rate.delete(0, tk.END)
                         self.tax_rate.insert(0, f"{avg_tax_rate:.2f}")
-                        self.auto_calc_labels["tax_rate"].config(text=f"(Avg from {quarters_used})")
+                        self.auto_calc_labels["tax_rate"].config(
+                            text=f"(Avg from {len(rates)} quarters in range {quarters_used})"
+                        )
                 
-                # Update other fields using the last selected quarter's data
+                # First, populate the latest_year_data dictionary
                 self.update_latest_financial_data(selected_cols)
+                
+                # Then update CapEx and Working Capital - This will now properly override the previous calculations
+                self.calculate_capex_wc_from_selected_quarters(selected_cols)
                 
             except Exception as e:
                 messagebox.showwarning("Warning", f"Error pre-filling parameters: {str(e)}")
                 import traceback
                 traceback.print_exc()
             
+    def calculate_capex_wc_from_selected_quarters(self, selected_cols):
+        """Calculate CapEx and Working Capital percentages from all selected quarters"""
+        if not selected_cols or len(selected_cols) < 1:
+            return
+        
+        quarters_used = f"{selected_cols[0]} to {selected_cols[-1]}"
+        print(f"Calculating CapEx and WC from quarters: {quarters_used}")
+        
+        # CapEx calculation from all selected quarters
+        capex_ratios = []
+        capex_keys = ['Purchase of PP&E', 'CapEx', 'Capital Expenditure', 'Capital Expenditures',
+                     'Purchase of Investment', 'Acquisitions']
+        
+        # Try each possible CapEx key
+        for capex_field in capex_keys:
+            if capex_field in self.df.index:
+                for col in selected_cols:
+                    try:
+                        capex = self.df.loc[capex_field, col]
+                        revenue = self.df.loc['Revenue', col]
+                        if pd.notna(capex) and pd.notna(revenue) and revenue > 0:
+                            # Use absolute value since CapEx is often negative in cash flow statements
+                            capex_ratio = (abs(capex) / revenue) * 100
+                            capex_ratios.append(capex_ratio)
+                            print(f"Found CapEx for {col}: {capex} / {revenue} = {capex_ratio:.2f}%")
+                    except Exception as e:
+                        print(f"Error calculating CapEx ratio for {col} with field {capex_field}: {str(e)}")
+                        continue
+                
+                # If we found values with this field, no need to check other fields
+                if capex_ratios:
+                    break
+                
+        if capex_ratios:
+            avg_capex_ratio = sum(capex_ratios) / len(capex_ratios)
+            self.capex_percent.delete(0, tk.END)
+            self.capex_percent.insert(0, f"{avg_capex_ratio:.2f}")
+            self.auto_calc_labels["capex_percent"].config(
+                text=f"(Avg from {len(capex_ratios)} quarters in range {quarters_used})"
+            )
+            print(f"Updated CapEx to {avg_capex_ratio:.2f}% from {len(capex_ratios)} quarters")
+        
+        # Working Capital calculation from all selected quarters
+        wc_ratios = []
+        # Try different combinations of asset/liability fields
+        asset_fields = ['Current Assets', 'Total Current Assets']
+        liability_fields = ['Current Liabilities', 'Total Current Liabilities']
+        
+        for asset_field in asset_fields:
+            for liability_field in liability_fields:
+                if asset_field in self.df.index and liability_field in self.df.index and 'Revenue' in self.df.index:
+                    for col in selected_cols:
+                        try:
+                            current_assets = self.df.loc[asset_field, col]
+                            current_liabilities = self.df.loc[liability_field, col]
+                            revenue = self.df.loc['Revenue', col]
+                            
+                            if (pd.notna(current_assets) and pd.notna(current_liabilities) and 
+                                pd.notna(revenue) and revenue > 0):
+                                wc = current_assets - current_liabilities
+                                wc_ratio = (wc / revenue) * 100
+                                wc_ratios.append(wc_ratio)
+                                print(f"Found WC for {col}: ({current_assets} - {current_liabilities}) / {revenue} = {wc_ratio:.2f}%")
+                        except Exception as e:
+                            print(f"Error calculating WC ratio for {col}: {str(e)}")
+                            continue
+                    
+                    # If we found values with this combination, no need to check others
+                    if wc_ratios:
+                        break
+                
+                # Break out of outer loop too if we found values
+                if wc_ratios:
+                    break
+                
+        if wc_ratios:
+            avg_wc_ratio = sum(wc_ratios) / len(wc_ratios)
+            self.wc_percent.delete(0, tk.END)
+            self.wc_percent.insert(0, f"{avg_wc_ratio:.2f}")
+            self.auto_calc_labels["wc_percent"].config(
+                text=f"(Avg from {len(wc_ratios)} quarters in range {quarters_used})"
+            )
+            print(f"Updated Working Capital to {avg_wc_ratio:.2f}% from {len(wc_ratios)} quarters")
+    
     def update_latest_financial_data(self, selected_cols):
         """Update latest financial data based on the selected columns"""
         if not selected_cols:
@@ -726,12 +819,12 @@ class DCFValuationCalculator:
             'Operating Income': ['Operating Income'],
             'Income Taxes': ['Income Taxes'],
             'Pretax Income': ['Pretax Income'],
-            'Current Assets': ['Current Assets'],
-            'Current Liabilities': ['Current Liabilities'],
+            'Current Assets': ['Current Assets', 'Total Current Assets'],
+            'Current Liabilities': ['Current Liabilities', 'Total Current Liabilities'],
             'Cash & Equivalents': ['Cash & Equivalents', 'Cash and Equivalents', 'Cash and Cash Equivalents'],
             'Long Term Debt': ['Long Term Debt', 'Long-Term Debt'],
             'Short Term Debt': ['Short Term Debt', 'Short-Term Debt'],
-            'Purchase of PP&E': ['Purchase of PP&E', 'CapEx', 'Capital Expenditure', 'Purchase of Investment', 'Acquisitions']
+            'Purchase of PP&E': ['Purchase of PP&E', 'CapEx', 'Capital Expenditure', 'Capital Expenditures', 'Purchase of Investment', 'Acquisitions']
         }
         
         # Helper function to find most recent non-NaN value with alternative keys
@@ -753,29 +846,10 @@ class DCFValuationCalculator:
             value, found_key, found_col = find_most_recent_value(alt_keys)
             if value is not None:
                 self.latest_year_data[primary_key] = value
+                print(f"Updated latest_year_data[{primary_key}] = {value}")
         
-        # Update the fields that use latest financial data
-        quarters_used = f"{selected_cols[0]}-{selected_cols[-1]}"
-        
-        # CapEx
-        if 'Purchase of PP&E' in self.latest_year_data and 'Revenue' in self.latest_year_data:
-            if self.latest_year_data['Revenue'] > 0:
-                capex_ratio = (abs(self.latest_year_data['Purchase of PP&E']) / self.latest_year_data['Revenue']) * 100
-                self.capex_percent.delete(0, tk.END)
-                self.capex_percent.insert(0, f"{capex_ratio:.2f}")
-                self.auto_calc_labels["capex_percent"].config(text=f"(From {quarters_used})")
-        
-        # Working Capital
-        if all(key in self.latest_year_data for key in ['Current Assets', 'Current Liabilities', 'Revenue']):
-            if self.latest_year_data['Revenue'] > 0:
-                wc = self.latest_year_data['Current Assets'] - self.latest_year_data['Current Liabilities']
-                wc_ratio = (wc / self.latest_year_data['Revenue']) * 100
-                self.wc_percent.delete(0, tk.END)
-                self.wc_percent.insert(0, f"{wc_ratio:.2f}")
-                self.auto_calc_labels["wc_percent"].config(text=f"(From {quarters_used})")
-        
-        # Shares Outstanding
-        share_fields = ['Common Stock', 'Common Equity', 'Outstanding Stock']
+        # Update shares outstanding - this separate process is okay to keep
+        share_fields = ['Shares Outstanding', 'shares outstanding']
         for field in share_fields:
             if field in self.df.index:
                 # Find most recent value
@@ -786,8 +860,10 @@ class DCFValuationCalculator:
                             self.shares_outstanding.delete(0, tk.END)
                             self.shares_outstanding.insert(0, f"{shares:.2f}")
                             self.auto_calc_labels["shares_outstanding"].config(text=f"(From {field}, {col})")
+                            print(f"Updated shares outstanding to {shares:.2f} from {field}, {col}")
                             break
-                    except:
+                    except Exception as e:
+                        print(f"Error getting shares from {field}, {col}: {e}")
                         continue
                 break  # Stop after we find the first valid field
         
@@ -798,6 +874,7 @@ class DCFValuationCalculator:
             self.current_debt.delete(0, tk.END)
             self.current_debt.insert(0, f"{debt:.2f}")
             self.auto_calc_labels["current_debt"].config(text=f"(From {debt_col})")
+            print(f"Updated debt to {debt:.2f} from {debt_col}")
         
         # Cash
         if 'Cash & Equivalents' in self.latest_year_data:
@@ -806,28 +883,166 @@ class DCFValuationCalculator:
             self.cash_equivalents.delete(0, tk.END)
             self.cash_equivalents.insert(0, f"{cash:.2f}")
             self.auto_calc_labels["cash_equivalents"].config(text=f"(From {cash_col})")
+            print(f"Updated cash to {cash:.2f} from {cash_col}")
     
     def calculate_valuation(self):
         try:
-            # Get forecast parameters
-            self.forecast_years = int(self.forecast_years_entry.get())
-            revenue_growth = float(self.revenue_growth.get()) / 100
-            operating_margin = float(self.operating_margin.get()) / 100
-            tax_rate = float(self.tax_rate.get()) / 100
-            capex_percent = float(self.capex_percent.get()) / 100
-            wc_percent = float(self.wc_percent.get()) / 100
-            discount_rate = float(self.discount_rate.get()) / 100
-            terminal_growth = float(self.terminal_growth.get()) / 100
-            shares_outstanding = float(self.shares_outstanding.get())
-            debt = float(self.current_debt.get())
-            cash = float(self.cash_equivalents.get())
+            # Validate all inputs before proceeding
+            required_fields = {
+                'Forecast Years': self.forecast_years_entry,
+                'Revenue Growth': self.revenue_growth,
+                'Operating Margin': self.operating_margin,
+                'Tax Rate': self.tax_rate,
+                'CapEx %': self.capex_percent,
+                'Working Capital %': self.wc_percent,
+                'Discount Rate': self.discount_rate,
+                'Terminal Growth': self.terminal_growth,
+                'Shares Outstanding': self.shares_outstanding,
+                'Debt': self.current_debt,
+                'Cash': self.cash_equivalents,
+            }
             
-            # Get latest revenue (annualized from quarterly)
-            if 'Revenue' in self.latest_year_data:
-                base_revenue = self.latest_year_data['Revenue'] * 4  # Annualize quarterly revenue
-            else:
-                messagebox.showerror("Error", "Could not find revenue data in the financial statement.")
+            # Check for empty fields
+            empty_fields = [name for name, field in required_fields.items() 
+                            if not field.get().strip()]
+            
+            if empty_fields:
+                messagebox.showerror("Input Error", 
+                                    f"Please fill in all required fields: {', '.join(empty_fields)}")
                 return
+            
+            # Get forecast parameters with proper validation
+            try:
+                self.forecast_years = int(self.forecast_years_entry.get())
+                if self.forecast_years <= 0:
+                    raise ValueError("Forecast years must be a positive integer")
+            except ValueError:
+                messagebox.showerror("Input Error", "Forecast years must be a valid positive integer")
+                return
+            
+            try:
+                revenue_growth = float(self.revenue_growth.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "Revenue growth rate must be a valid number")
+                return
+            
+            try:
+                operating_margin = float(self.operating_margin.get()) / 100
+                if not (0 <= operating_margin <= 1):
+                    messagebox.showwarning("Warning", 
+                        f"Operating margin is {operating_margin*100:.2f}%, which is outside normal range (0-100%)")
+            except ValueError:
+                messagebox.showerror("Input Error", "Operating margin must be a valid number")
+                return
+            
+            try:
+                tax_rate = float(self.tax_rate.get()) / 100
+                if not (0 <= tax_rate <= 1):
+                    messagebox.showwarning("Warning", 
+                        f"Tax rate is {tax_rate*100:.2f}%, which is outside normal range (0-100%)")
+            except ValueError:
+                messagebox.showerror("Input Error", "Tax rate must be a valid number")
+                return
+            
+            try:
+                capex_percent = float(self.capex_percent.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "CapEx percentage must be a valid number")
+                return
+            
+            try:
+                wc_percent = float(self.wc_percent.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "Working capital percentage must be a valid number")
+                return
+            
+            try:
+                discount_rate = float(self.discount_rate.get()) / 100
+                if not (0 < discount_rate < 1):
+                    messagebox.showwarning("Warning", 
+                        f"Discount rate is {discount_rate*100:.2f}%, which is outside typical range (1-99%)")
+            except ValueError:
+                messagebox.showerror("Input Error", "Discount rate must be a valid number")
+                return
+            
+            try:
+                terminal_growth = float(self.terminal_growth.get()) / 100
+                if terminal_growth >= discount_rate:
+                    messagebox.showerror("Input Error", 
+                        "Terminal growth rate must be less than discount rate for model validity")
+                    return
+            except ValueError:
+                messagebox.showerror("Input Error", "Terminal growth rate must be a valid number")
+                return
+            
+            try:
+                shares_outstanding = float(self.shares_outstanding.get())
+                if shares_outstanding <= 0:
+                    raise ValueError("Shares must be positive")
+            except ValueError:
+                messagebox.showerror("Input Error", "Shares outstanding must be a valid positive number")
+                return
+            
+            try:
+                debt = float(self.current_debt.get())
+            except ValueError:
+                messagebox.showerror("Input Error", "Debt must be a valid number")
+                return
+            
+            try:
+                cash = float(self.cash_equivalents.get())
+            except ValueError:
+                messagebox.showerror("Input Error", "Cash must be a valid number")
+                return
+            
+            # Calculate base revenue using average of last 3 years (12 quarters) if available
+            if 'Revenue' in self.latest_year_data:
+                # Try to get the last 12 quarters of revenue data
+                revenue_values = []
+                if hasattr(self, 'quarter_cols') and len(self.quarter_cols) > 0:
+                    # Get the most recent quarters (up to 12)
+                    quarters_to_use = self.quarter_cols[-min(12, len(self.quarter_cols)):]
+                    
+                    # Collect non-NaN revenue values from these quarters
+                    for col in quarters_to_use:
+                        try:
+                            value = self.df.loc['Revenue', col]
+                            if pd.notna(value) and value > 0:
+                                revenue_values.append(value)
+                        except Exception as e:
+                            print(f"Warning: Could not get revenue for {col}: {e}")
+                    
+                    if revenue_values:
+                        # Calculate average quarterly revenue and annualize
+                        avg_quarterly_revenue = sum(revenue_values) / len(revenue_values)
+                        base_revenue = avg_quarterly_revenue * 4
+                        print(f"Using average of {len(revenue_values)} quarters for base revenue calculation")
+                    else:
+                        # Fallback to latest revenue value if no historical data found
+                        base_revenue = self.latest_year_data['Revenue'] * 4
+                        print("Warning: No historical quarterly data found, using latest quarter * 4")
+                else:
+                    # Fallback to latest revenue value if no quarter columns defined
+                    base_revenue = self.latest_year_data['Revenue'] * 4
+                    print("Warning: No quarter columns defined, using latest quarter * 4")
+            else:
+                messagebox.showerror("Error", "Could not find revenue data in the financial statement")
+                return
+            
+            # Print inputs for debugging
+            print(f"DCF Model Inputs:")
+            print(f"  Base Revenue: ${base_revenue:.2f}M")
+            print(f"  Forecast Years: {self.forecast_years}")
+            print(f"  Revenue Growth: {revenue_growth*100:.2f}%")
+            print(f"  Operating Margin: {operating_margin*100:.2f}%")
+            print(f"  Tax Rate: {tax_rate*100:.2f}%")
+            print(f"  CapEx %: {capex_percent*100:.2f}%")
+            print(f"  Working Capital %: {wc_percent*100:.2f}%")
+            print(f"  Discount Rate: {discount_rate*100:.2f}%")
+            print(f"  Terminal Growth: {terminal_growth*100:.2f}%")
+            print(f"  Shares Outstanding: {shares_outstanding}M")
+            print(f"  Debt: ${debt}M")
+            print(f"  Cash: ${cash}M")
             
             # Create forecast model
             years = list(range(1, self.forecast_years + 1))
