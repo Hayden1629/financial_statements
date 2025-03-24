@@ -177,6 +177,23 @@ class DCFValuationCalculator:
         self.auto_calc_labels["cash_equivalents"] = ttk.Label(dcf_frame, text="", foreground="green")
         self.auto_calc_labels["cash_equivalents"].grid(row=5, column=2, sticky="w", padx=5, pady=5)
         
+        # Add Reverse DCF section
+        reverse_dcf_frame = ttk.LabelFrame(left_frame, text="Reverse DCF Calculator", padding=10)
+        reverse_dcf_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Current market price
+        ttk.Label(reverse_dcf_frame, text="Current Share Price ($):").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.current_share_price = ttk.Entry(reverse_dcf_frame)
+        self.current_share_price.grid(row=0, column=1, padx=5, pady=5)
+        
+        # Button to calculate implied discount rate
+        reverse_calc_button = ttk.Button(
+            reverse_dcf_frame, 
+            text="Calculate Implied Discount Rate", 
+            command=self.calculate_implied_discount_rate
+        )
+        reverse_calc_button.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky="ew")
+        
         # Right frame for preview
         right_frame = ttk.Frame(self.forecast_frame)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -1209,6 +1226,310 @@ class DCFValuationCalculator:
             messagebox.showerror("Error", f"Failed to calculate valuation: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def calculate_implied_discount_rate(self):
+        """Calculate the discount rate implied by the current share price"""
+        try:
+            # Validate required inputs
+            required_fields = {
+                'Forecast Years': self.forecast_years_entry,
+                'Revenue Growth': self.revenue_growth,
+                'Operating Margin': self.operating_margin,
+                'Tax Rate': self.tax_rate,
+                'CapEx %': self.capex_percent,
+                'Working Capital %': self.wc_percent,
+                'Terminal Growth': self.terminal_growth,
+                'Shares Outstanding': self.shares_outstanding,
+                'Debt': self.current_debt,
+                'Cash': self.cash_equivalents,
+                'Current Share Price': self.current_share_price,
+            }
+            
+            # Check for empty fields
+            empty_fields = [name for name, field in required_fields.items() 
+                           if not field.get().strip()]
+            
+            if empty_fields:
+                messagebox.showerror("Input Error", 
+                                    f"Please fill in all required fields: {', '.join(empty_fields)}")
+                return
+            
+            # Get input values
+            try:
+                forecast_years = int(self.forecast_years_entry.get())
+                if forecast_years <= 0:
+                    raise ValueError("Forecast years must be a positive integer")
+            except ValueError:
+                messagebox.showerror("Input Error", "Forecast years must be a valid positive integer")
+                return
+                
+            try:
+                revenue_growth = float(self.revenue_growth.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "Revenue growth rate must be a valid number")
+                return
+                
+            try:
+                operating_margin = float(self.operating_margin.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "Operating margin must be a valid number")
+                return
+                
+            try:
+                tax_rate = float(self.tax_rate.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "Tax rate must be a valid number")
+                return
+                
+            try:
+                capex_percent = float(self.capex_percent.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "CapEx percentage must be a valid number")
+                return
+                
+            try:
+                wc_percent = float(self.wc_percent.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "Working capital percentage must be a valid number")
+                return
+                
+            try:
+                terminal_growth = float(self.terminal_growth.get()) / 100
+            except ValueError:
+                messagebox.showerror("Input Error", "Terminal growth rate must be a valid number")
+                return
+                
+            try:
+                shares_outstanding = float(self.shares_outstanding.get())
+                if shares_outstanding <= 0:
+                    raise ValueError("Shares must be positive")
+            except ValueError:
+                messagebox.showerror("Input Error", "Shares outstanding must be a valid positive number")
+                return
+                
+            try:
+                debt = float(self.current_debt.get())
+            except ValueError:
+                messagebox.showerror("Input Error", "Debt must be a valid number")
+                return
+                
+            try:
+                cash = float(self.cash_equivalents.get())
+            except ValueError:
+                messagebox.showerror("Input Error", "Cash must be a valid number")
+                return
+                
+            try:
+                current_price = float(self.current_share_price.get())
+                if current_price <= 0:
+                    raise ValueError("Share price must be positive")
+            except ValueError:
+                messagebox.showerror("Input Error", "Current share price must be a valid positive number")
+                return
+            
+            # Calculate base revenue in the same way as the forward DCF model
+            if 'Revenue' in self.latest_year_data:
+                # Try to get the last 12 quarters of revenue data
+                revenue_values = []
+                if hasattr(self, 'quarter_cols') and len(self.quarter_cols) > 0:
+                    # Get the most recent quarters (up to 12)
+                    quarters_to_use = self.quarter_cols[-min(12, len(self.quarter_cols)):]
+                    
+                    # Collect non-NaN revenue values from these quarters
+                    for col in quarters_to_use:
+                        try:
+                            value = self.df.loc['Revenue', col]
+                            if pd.notna(value) and value > 0:
+                                revenue_values.append(value)
+                        except Exception as e:
+                            print(f"Warning: Could not get revenue for {col}: {e}")
+                    
+                    if revenue_values:
+                        # Calculate average quarterly revenue and annualize
+                        avg_quarterly_revenue = sum(revenue_values) / len(revenue_values)
+                        base_revenue = avg_quarterly_revenue * 4
+                        print(f"Using average of {len(revenue_values)} quarters for base revenue calculation")
+                    else:
+                        # Fallback to latest revenue value if no historical data found
+                        base_revenue = self.latest_year_data['Revenue'] * 4
+                        print("Warning: No historical quarterly data found, using latest quarter * 4")
+                else:
+                    # Fallback to latest revenue value if no quarter columns defined
+                    base_revenue = self.latest_year_data['Revenue'] * 4
+                    print("Warning: No quarter columns defined, using latest quarter * 4")
+            else:
+                messagebox.showerror("Error", "Could not find revenue data in the financial statement")
+                return
+            
+            # Calculate the target equity value from the current share price
+            target_equity_value = current_price * shares_outstanding
+            
+            # Calculate the target enterprise value
+            target_ev = target_equity_value + debt - cash
+            
+            # Implement a binary search algorithm to find the discount rate that matches the target EV
+            def calculate_ev_with_discount_rate(discount_rate):
+                # Create forecast model
+                years = list(range(1, forecast_years + 1))
+                revenue = [base_revenue * (1 + revenue_growth) ** year for year in years]
+                ebit = [rev * operating_margin for rev in revenue]
+                tax_amount = [op * tax_rate for op in ebit]
+                nopat = [op - tx for op, tx in zip(ebit, tax_amount)]
+                
+                # Calculate CapEx and Working Capital changes
+                capex = [rev * capex_percent for rev in revenue]
+                
+                # For working capital, we need to calculate the change year over year
+                wc = [rev * wc_percent for rev in revenue]
+                wc_change = [0] + [wc[i] - wc[i-1] for i in range(1, len(wc))]
+                wc_change[0] = wc[0] - (base_revenue * wc_percent)
+                
+                # Free Cash Flow
+                fcf = [nopat[i] - capex[i] - wc_change[i] for i in range(len(nopat))]
+                
+                # Terminal Value
+                terminal_value = fcf[-1] * (1 + terminal_growth) / (discount_rate - terminal_growth)
+                
+                # Discounted Cash Flows
+                dcf_values = [flow / (1 + discount_rate) ** year for year, flow in zip(years, fcf)]
+                
+                # Discounted Terminal Value
+                discounted_tv = terminal_value / (1 + discount_rate) ** forecast_years
+                
+                # Enterprise Value
+                ev = sum(dcf_values) + discounted_tv
+                
+                return ev
+            
+            # Binary search to find the implied discount rate
+            low_rate = 0.01  # 1%
+            high_rate = 0.50  # 50%
+            mid_rate = (low_rate + high_rate) / 2
+            tolerance = 0.0001  # Acceptable error in enterprise value
+            max_iterations = 100
+            
+            # Check if terminal growth is less than the lowest discount rate we'll try
+            if terminal_growth >= low_rate:
+                low_rate = terminal_growth + 0.01  # Set low_rate just above terminal growth
+                if low_rate >= high_rate:
+                    messagebox.showerror("Error", 
+                        "Terminal growth rate is too high to find a valid discount rate solution")
+                    return
+            
+            # Ensure we can bracket the solution
+            ev_at_low = calculate_ev_with_discount_rate(low_rate)
+            ev_at_high = calculate_ev_with_discount_rate(high_rate)
+            
+            if (ev_at_low < target_ev and ev_at_high < target_ev) or (ev_at_low > target_ev and ev_at_high > target_ev):
+                messagebox.showerror("Error", 
+                    f"Cannot find a solution in the range {low_rate*100:.1f}% to {high_rate*100:.1f}%. "
+                    f"The current price may be outside the model's realistic valuation range.")
+                return
+            
+            # Perform binary search
+            iteration = 0
+            while iteration < max_iterations:
+                mid_rate = (low_rate + high_rate) / 2
+                
+                # Check if mid_rate would lead to invalid terminal value calculation
+                if mid_rate <= terminal_growth:
+                    low_rate = mid_rate
+                    continue
+                
+                ev_at_mid = calculate_ev_with_discount_rate(mid_rate)
+                error = abs(ev_at_mid - target_ev)
+                
+                # If within tolerance, we found our solution
+                if error < tolerance * target_ev:
+                    break
+                
+                # Adjust search range
+                if ev_at_mid > target_ev:
+                    low_rate = mid_rate
+                else:
+                    high_rate = mid_rate
+                
+                iteration += 1
+            
+            # Get the resulting values for displaying
+            implied_discount_rate = mid_rate
+            ev_at_implied_rate = calculate_ev_with_discount_rate(implied_discount_rate)
+            
+            # Calculate implied price per share for validation
+            implied_equity_value = ev_at_implied_rate - debt + cash
+            implied_price = implied_equity_value / shares_outstanding
+            
+            # Display results
+            result_window = tk.Toplevel(self.root)
+            result_window.title("Reverse DCF Analysis Results")
+            result_window.geometry("500x400")
+            result_window.transient(self.root)
+            result_window.grab_set()
+            
+            # Create a frame to hold the results
+            result_frame = ttk.Frame(result_window, padding=20)
+            result_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Add results text
+            ttk.Label(result_frame, text="Reverse DCF Analysis Results", 
+                    font=("Arial", 14, "bold")).pack(pady=(0, 20))
+            
+            # Display the implied discount rate
+            ttk.Label(result_frame, text=f"Implied Discount Rate: {implied_discount_rate*100:.2f}%", 
+                    font=("Arial", 12)).pack(anchor="w", pady=5)
+            
+            # Display the target values
+            ttk.Label(result_frame, text=f"Target Share Price: ${current_price:.2f}", 
+                    font=("Arial", 11)).pack(anchor="w", pady=5)
+            ttk.Label(result_frame, text=f"Target Equity Value: ${target_equity_value:.2f} million", 
+                    font=("Arial", 11)).pack(anchor="w", pady=5)
+            ttk.Label(result_frame, text=f"Target Enterprise Value: ${target_ev:.2f} million", 
+                    font=("Arial", 11)).pack(anchor="w", pady=5)
+            
+            # Display key assumptions used
+            ttk.Label(result_frame, text="Key Assumptions:", 
+                    font=("Arial", 11, "bold")).pack(anchor="w", pady=(15, 5))
+            ttk.Label(result_frame, text=f"Base Revenue: ${base_revenue:.2f} million").pack(anchor="w", pady=2)
+            ttk.Label(result_frame, text=f"Revenue Growth: {revenue_growth*100:.2f}%").pack(anchor="w", pady=2)
+            ttk.Label(result_frame, text=f"Operating Margin: {operating_margin*100:.2f}%").pack(anchor="w", pady=2)
+            ttk.Label(result_frame, text=f"Terminal Growth Rate: {terminal_growth*100:.2f}%").pack(anchor="w", pady=2)
+            
+            # Add interpretation
+            ttk.Separator(result_frame, orient="horizontal").pack(fill="x", pady=15)
+            interpretation = (
+                f"Based on the current share price of ${current_price:.2f}, the market is implying "
+                f"a {implied_discount_rate*100:.2f}% discount rate (cost of capital).\n\n"
+                f"{'This is higher than typical discount rates, suggesting the market views this investment as risky.' if implied_discount_rate > 0.12 else 'This is within typical discount rate ranges, suggesting fair market pricing.'}"
+            )
+            
+            interpretation_label = ttk.Label(result_frame, text=interpretation, wraplength=450, justify="left")
+            interpretation_label.pack(pady=10)
+            
+            # Add a button to use this discount rate in the model
+            ttk.Button(result_frame, text="Use This Discount Rate in DCF Model", 
+                     command=lambda: self.apply_implied_discount_rate(implied_discount_rate, result_window)).pack(pady=15)
+            
+            # Apply this discount rate to the main model
+            self.discount_rate.delete(0, tk.END)
+            self.discount_rate.insert(0, f"{implied_discount_rate*100:.2f}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to calculate implied discount rate: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def apply_implied_discount_rate(self, discount_rate, window):
+        """Apply the calculated discount rate to the main model and close the window"""
+        # Update the discount rate in the main form
+        self.discount_rate.delete(0, tk.END)
+        self.discount_rate.insert(0, f"{discount_rate*100:.2f}")
+        
+        # Close the window
+        window.destroy()
+        
+        # Show confirmation
+        messagebox.showinfo("Discount Rate Applied", 
+                           f"The implied discount rate of {discount_rate*100:.2f}% has been applied to your DCF model.")
 
 def main():
     root = tk.Tk()
