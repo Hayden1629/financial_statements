@@ -5,6 +5,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 import re
+import argparse
+import sys
 
 class FinancialStatementConsolidator:
     def __init__(self, statements_dir):
@@ -23,7 +25,9 @@ class FinancialStatementConsolidator:
                 'QTR': None
             }
         }
-        self.company_ticker = None
+        
+        # Extract ticker from the directory name
+        self.company_ticker = os.path.basename(statements_dir).upper()
         self._load_files()
 
     def _load_files(self):
@@ -34,10 +38,7 @@ class FinancialStatementConsolidator:
                 
             period_type = filename.split('_')[0]  # FY or QTR
             
-            # Extract company ticker from filename
-            ticker_match = re.search(r'_([A-Z]+)\.xlsx$', filename, re.IGNORECASE)
-            if ticker_match and not self.company_ticker:
-                self.company_ticker = ticker_match.group(1)
+            # No need to extract ticker from filename anymore, as we get it from directory
             
             if 'balance_sheet' in filename.lower():
                 statement_type = 'balance_sheet'
@@ -367,9 +368,38 @@ class FinancialStatementConsolidator:
         print(f"Consolidated statements saved to {output_path}")
 
 def main():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    statements_dir = os.path.join(script_dir, 'statements')
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Consolidate financial statements for a specific ticker.')
+    parser.add_argument('ticker', nargs='?', help='Stock ticker symbol')
+    args = parser.parse_args()
     
+    # Get the ticker either from command line or user input
+    ticker = args.ticker
+    if not ticker:
+        ticker = input("Please enter the ticker symbol: ").strip().upper()
+        if not ticker:
+            print("No ticker provided. Exiting.")
+            sys.exit(1)
+    else:
+        ticker = ticker.upper()
+    
+    print(f"Processing financial statements for ticker: {ticker}")
+    
+    # Construct the statements directory path with the ticker subfolder
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    statements_dir = os.path.join(script_dir, 'statements', ticker)
+    
+    # Check if the directory exists
+    if not os.path.exists(statements_dir):
+        print(f"Error: No directory found for ticker {ticker} at path: {statements_dir}")
+        print("Available tickers:")
+        tickers_dir = os.path.join(script_dir, 'statements')
+        available_tickers = [d for d in os.listdir(tickers_dir) if os.path.isdir(os.path.join(tickers_dir, d))]
+        for t in available_tickers:
+            print(f"  - {t}")
+        sys.exit(1)
+    
+    # Initialize consolidator with the ticker-specific directory
     consolidator = FinancialStatementConsolidator(statements_dir)
     consolidator.consolidate_statements()
     
