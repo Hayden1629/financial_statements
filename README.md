@@ -1,49 +1,34 @@
-# Financial Statement Consolidator
 
-This program consolidates quarterly financial statements by combining quarterly data (Q1-Q3) with annual data to extract Q4 values and align all quarters for each year in a single consolidated view.
+
+This repository contains tools for financial statement analysis, consolidation, and valuation. It helps process quarterly reports, create consolidated statements, and perform discounted cash flow (DCF) valuation. I designed it to use the excel files exported from Godel Terminal.
 
 ## Features
 
+### Financial Statement Consolidator (V2)
+- First download quarterly and yearly balance sheet, income statement, and cashflow statement from godel terminal
+- Put all your statements into a folder with the name as your company ticker
+- run consolidator2.py and pass the ticker in as the argument
+- Run this program to consolidate to one sheet 
+- Find number of shares outstanding for your company and put it at the bottom of the file in any column with the row header "Shares Outstanding" if your want the program to pick up that value
 - Consolidates balance sheets, income statements, and cash flow statements into a single Excel worksheet
 - Automatically extracts Q4 figures from annual statements by comparing with Q1-Q3 data
 - Displays all financial data in chronological order by quarter
-- Detects company ticker from filenames and includes in the output file name
-- Formats output with appropriate styling for better readability
+
+### DCF Valuation Calculator
+- Load in consolidated excel file
+- Calculate enterprise and equity value using DCF methodology
+- Auto-populates financial metrics from historical data, but make sure to verify them off the most recent filing
+- Customizable forecast parameters:
+  - Revenue growth
+  - Operating margins
+  - Tax rates
+  - Capital expenditures
+  - Working capital requirements
+- Interactive visualization of forecasted cash flows
+- Reverse DCF functionality to calculate implied discount rate from current stock price
+- Detailed output with valuation summary and calculation breakdown
 
 ## Requirements
 
 - Python 3.6 or higher
 - Dependencies listed in `requirements.txt`
-
-## Installation
-
-1. Install the required dependencies:
-```
-pip install -r requirements.txt
-```
-
-## Usage
-
-1. Place your financial statement Excel files in the `statements` directory with the following naming convention:
-   - Files for balance sheets should include 'balance_sheet' in the filename
-   - Files for income statements should include 'income_statement' in the filename
-   - Files for cash flow statements should include 'cash_flow' in the filename
-   - Files for yearly statements should start with 'FY_'
-   - Files for quarterly statements should start with 'QTR_'
-   - Include company ticker at the end (e.g., FY_balance_sheet_EQ_CL.xlsx)
-
-2. Run the consolidator script:
-```
-python consolidator.py
-```
-
-3. The consolidated statements will be saved to `consolidated_statements_[TICKER].xlsx` in the same directory.
-
-## Output
-
-The output Excel workbook will contain a single sheet with:
-- Balance Sheet section (top)
-- Income Statement section (middle)
-- Cash Flow section (bottom)
-
-All data is aligned by quarters, with columns labeled as "Q1 YYYY", "Q2 YYYY", etc. 
