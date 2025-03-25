@@ -565,40 +565,74 @@ class FinancialStatementConsolidator:
         # Create a copy of the dataframe to avoid fragmentation
         df = df.copy()
         
-        # Debug: Print some sample account names to help identify the correct patterns
-        print("Sample account names in the dataframe:")
-        for account in list(df['Account'].unique())[:10]:  # Show first 10 accounts
+        # More comprehensive patterns for account matching, based on actual data
+        account_patterns = {
+            'current_assets': ['current assets', 'total current assets', 'Current Assets', 'Total Current Assets'],
+            'current_liabilities': ['current liabilities', 'total current liabilities', 'Current Liabilities', 'Total Current Liabilities'],
+            'revenue': ['Revenue', 'Total Revenue', 'Net Sales', 'revenue', 'total revenue', 'net sales'],
+            'capex': ['Purchase of PP&E','capital expenditure', 'capex', 'cap ex', 'purchases of property', 
+                     'additions to property and equipment', 'payments for property and equipment',
+                     'Capital Expenditure', 'Capital Expenditures', 'Purchase of Property and Equipment'],
+            'op_cash_flow': ['operating cash flow', 'Net Cash from Operations', 'Net Cash from Continuing Operating Activities','cash from operating', 
+                             'operating activities', 'cash provided by operating', 
+                             'net cash from continuing operating activities', 'Operating Cash Flow', 'Cash from Operating Activities']
+        }
+        
+        # Debug: Print all account names in the dataframe
+        print("\nAll account names in the dataframe:")
+        for account in df['Account'].unique():
             print(f"  - {account}")
         
         # Get all quarter/year columns (Q1 2023, Q2 2023, etc.)
         data_cols = [col for col in df.columns if re.search(r'(Q\d|FY)\s+\d{4}', str(col))]
         print(f"Found {len(data_cols)} data columns: {data_cols}")
         
-        # More comprehensive patterns for account matching, based on actual data
-        account_patterns = {
-            'current_assets': ['current assets', 'total current assets'],
-            'current_liabilities': ['current liabilities', 'total current liabilities'],
-            'revenue': ['revenue', 'total revenue', 'net sales', 'current deferred revenue'],
-            'capex': ['Purchase of PP&E','capital expenditure', 'capex', 'cap ex', 'purchases of property', 
-                     'additions to property and equipment', 'payments for property and equipment'],
-            'op_cash_flow': ['operating cash flow', 'Net Cash from Operations', 'Net Cash from Continuing Operating Activities','cash from operating', 
-                             'operating activities', 'cash provided by operating', 
-                             'net cash from continuing operating activities']
-        }
+        # Separate yearly and quarterly columns
+        yearly_cols = [col for col in data_cols if col.startswith('FY')]
+        quarterly_cols = [col for col in data_cols if col.startswith('Q')]
+        print(f"Found {len(yearly_cols)} yearly columns: {yearly_cols}")
+        print(f"Found {len(quarterly_cols)} quarterly columns: {quarterly_cols}")
         
-        # Find the best match for each account type
+        # Find the best match for each account type using exact matching first
         account_matches = {}
         for account_type, patterns in account_patterns.items():
+            # First try exact matches (case-insensitive)
             for pattern in patterns:
-                matches = df[df['Account'].str.contains(pattern, case=False, na=False)]
-                if not matches.empty:
-                    # Store the first match
-                    account_matches[account_type] = matches['Account'].iloc[0]
-                    print(f"Found match for {account_type}: '{account_matches[account_type]}'")
+                exact_matches = df[df['Account'].str.lower() == pattern.lower()]
+                if not exact_matches.empty:
+                    account_matches[account_type] = exact_matches['Account'].iloc[0]
+                    print(f"\nFound exact match for {account_type}: '{account_matches[account_type]}'")
                     break
+            
+            # If no exact match, try contains
+            if account_type not in account_matches:
+                for pattern in patterns:
+                    contains_matches = df[df['Account'].str.contains(pattern, case=False, na=False)]
+                    if not contains_matches.empty:
+                        account_matches[account_type] = contains_matches['Account'].iloc[0]
+                        print(f"\nFound partial match for {account_type}: '{account_matches[account_type]}'")
+                        break
+        
+        # Special handling for Revenue - prefer main Revenue account over Current Deferred Revenue
+        if 'revenue' in account_matches and 'current deferred revenue' in account_matches['revenue'].lower():
+            # Try to find a better revenue match
+            revenue_matches = df[df['Account'].str.lower() == 'revenue']
+            if not revenue_matches.empty:
+                account_matches['revenue'] = revenue_matches['Account'].iloc[0]
+                print(f"\nOverriding revenue match with better match: '{account_matches['revenue']}'")
+        
+        # Force exact match for Revenue if it exists
+        revenue_exact = df[df['Account'] == 'Revenue']
+        if not revenue_exact.empty:
+            account_matches['revenue'] = 'Revenue'
+            print(f"\nForcing exact match for Revenue: '{account_matches['revenue']}'")
         
         if not account_matches:
-            print(f"WARNING: No match found for any account type")
+            print(f"\nWARNING: No match found for any account type")
+        else:
+            print("\nAccount matches found:")
+            for account_type, match in account_matches.items():
+                print(f"  {account_type}: {match}")
         
         # Add new rows to the dataframe for calculated metrics
         new_rows = []
@@ -623,12 +657,22 @@ class FinancialStatementConsolidator:
         new_df_rows = pd.DataFrame(new_rows)
         df = pd.concat([df, new_df_rows], ignore_index=True)
         
+        # Get the indices for our calculated rows once
+        wc_idx = df[df['Account'] == 'Working Capital'].index[0]
+        wc_pct_idx = df[df['Account'] == 'Working Capital % of Revenue'].index[0]
+        capex_pct_idx = df[df['Account'] == 'CapEx % of Revenue'].index[0]
+        fcf_idx = df[df['Account'] == 'Free Cash Flow'].index[0]
+        
         # Process each data column and calculate metrics
         for col in data_cols:
+            # Skip the 'Account' column
+            if col == 'Account':
+                continue
+                
             print(f"Processing metrics for {col}...")
             
-            # 1. Working Capital
-            if 'current_assets' in account_matches and 'current_liabilities' in account_matches:
+            # 1. Working Capital - only calculate for yearly columns (FY)
+            if col.startswith('FY') and 'current_assets' in account_matches and 'current_liabilities' in account_matches:
                 try:
                     # Get the actual row values
                     assets_row = df[df['Account'] == account_matches['current_assets']]
@@ -641,52 +685,85 @@ class FinancialStatementConsolidator:
                         # Calculate working capital
                         working_capital = current_assets - current_liabilities
                         
-                        # Add to the Working Capital row directly
-                        wc_idx = df[df['Account'] == 'Working Capital'].index[0]
-                        df.loc[wc_idx, col] = working_capital
+                        # Add to the Working Capital row
+                        df.at[wc_idx, col] = working_capital
                         
                         print(f"  Working Capital for {col}: {working_capital:,.2f}")
                         
-                        # 2. Working Capital as % of Revenue
+                        # 2. Working Capital as % of Revenue - only for yearly columns
                         if 'revenue' in account_matches:
                             rev_row = df[df['Account'] == account_matches['revenue']]
                             
-                            if not rev_row.empty and pd.notna(rev_row[col].iloc[0]):
-                                revenue = float(rev_row[col].iloc[0])
+                            print(f"  Revenue account for WC%: {account_matches['revenue']}")
+                            
+                            if not rev_row.empty:
+                                revenue_value = rev_row[col].iloc[0]
+                                print(f"  Raw Revenue value for WC%: {revenue_value}")
                                 
-                                if revenue != 0:  # Avoid division by zero
-                                    wc_percent = (working_capital / revenue) * 100
+                                if pd.notna(revenue_value):
+                                    revenue = float(revenue_value)
                                     
-                                    # Add to the Working Capital % row directly
-                                    wc_pct_idx = df[df['Account'] == 'Working Capital % of Revenue'].index[0]
-                                    df.loc[wc_pct_idx, col] = wc_percent
-                                    
-                                    print(f"  Working Capital % for {col}: {wc_percent:.2f}%")
+                                    if revenue != 0:  # Avoid division by zero
+                                        wc_percent = (working_capital / revenue) * 100
+                                        
+                                        # Add to the Working Capital % row
+                                        df.at[wc_pct_idx, col] = wc_percent
+                                        
+                                        print(f"  Working Capital % for {col}: {wc_percent:.2f}% (WC: {working_capital:,.2f} / Revenue: {revenue:,.2f})")
+                                    else:
+                                        print(f"  Skipping Working Capital % for {col}: Revenue is zero")
+                                else:
+                                    print(f"  Skipping Working Capital % for {col}: Revenue value is not valid")
+                            else:
+                                print(f"  Skipping Working Capital % for {col}: Revenue row not found")
+                        else:
+                            print(f"  Skipping Working Capital %: No revenue account identified")
                 except Exception as e:
                     print(f"  Error calculating Working Capital for {col}: {str(e)}")
+            elif not col.startswith('FY'):
+                print(f"  Skipping Working Capital calculations for {col}: Not a yearly column")
             
-            # 3. CapEx % of Revenue
+            # 3. CapEx % of Revenue - calculate for all columns (quarterly and yearly)
             if 'capex' in account_matches and 'revenue' in account_matches:
                 try:
                     capex_row = df[df['Account'] == account_matches['capex']]
                     rev_row = df[df['Account'] == account_matches['revenue']]
                     
-                    if not capex_row.empty and not rev_row.empty and pd.notna(capex_row[col].iloc[0]) and pd.notna(rev_row[col].iloc[0]):
-                        capex = float(capex_row[col].iloc[0])
-                        revenue = float(rev_row[col].iloc[0])
+                    print(f"  CapEx account: {account_matches['capex']}")
+                    print(f"  Revenue account: {account_matches['revenue']}")
+                    
+                    if not capex_row.empty and not rev_row.empty:
+                        capex_value = capex_row[col].iloc[0]
+                        revenue_value = rev_row[col].iloc[0]
                         
-                        capex_abs = abs(capex)  # Use absolute value for percentage
+                        print(f"  Raw CapEx value: {capex_value}")
+                        print(f"  Raw Revenue value: {revenue_value}")
                         
-                        if revenue != 0:  # Avoid division by zero
-                            capex_percent = (capex_abs / revenue) * 100
+                        if pd.notna(capex_value) and pd.notna(revenue_value):
+                            capex = float(capex_value)
+                            revenue = float(revenue_value)
                             
-                            # Add to the CapEx % row directly
-                            capex_pct_idx = df[df['Account'] == 'CapEx % of Revenue'].index[0]
-                            df.loc[capex_pct_idx, col] = capex_percent
+                            capex_abs = abs(capex)  # Use absolute value for percentage
                             
-                            print(f"  CapEx % for {col}: {capex_percent:.2f}%")
+                            if revenue != 0:  # Avoid division by zero
+                                capex_percent = (capex_abs / revenue) * 100
+                                
+                                # Add to the CapEx % row
+                                df.at[capex_pct_idx, col] = capex_percent
+                                
+                                print(f"  CapEx % for {col}: {capex_percent:.2f}% (CapEx: {capex_abs:,.2f} / Revenue: {revenue:,.2f})")
+                            else:
+                                print(f"  Skipping CapEx % for {col}: Revenue is zero")
+                        else:
+                            print(f"  Skipping CapEx % for {col}: Missing data - CapEx valid: {pd.notna(capex_value)}, Revenue valid: {pd.notna(revenue_value)}")
+                    else:
+                        print(f"  Skipping CapEx % for {col}: CapEx row found: {not capex_row.empty}, Revenue row found: {not rev_row.empty}")
                 except Exception as e:
                     print(f"  Error calculating CapEx % for {col}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"  Skipping CapEx %: CapEx account found: {'capex' in account_matches}, Revenue account found: {'revenue' in account_matches}")
             
             # 4. Free Cash Flow
             if 'op_cash_flow' in account_matches and 'capex' in account_matches:
@@ -701,9 +778,8 @@ class FinancialStatementConsolidator:
                         # Calculate FCF (CapEx is often negative in statements)
                         fcf = op_cash_flow + capex if capex < 0 else op_cash_flow - capex
                         
-                        # Add to the Free Cash Flow row directly
-                        fcf_idx = df[df['Account'] == 'Free Cash Flow'].index[0]
-                        df.loc[fcf_idx, col] = fcf
+                        # Add to the Free Cash Flow row
+                        df.at[fcf_idx, col] = fcf
                         
                         print(f"  Free Cash Flow for {col}: {fcf:,.2f}")
                 except Exception as e:
