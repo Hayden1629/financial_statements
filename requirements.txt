@@ -3,4 +3,4 @@ numpy>=1.20.0
 openpyxl>=3.0.7
 xlrd>=2.0.1
 matplotlib>=3.4.0
-tkinter>=8.6 
+tk>=8.6 
